@@ -45,6 +45,8 @@ class NTFSFileEntry:
         self.used_size = 0
         self.size = 0
         self.created = None
+        self.created_time = None
+        self.created_date = None
         self.modified = None
         self.accessed = None
         self.attributes = []
@@ -59,15 +61,18 @@ class NTFSFileEntry:
                 f"is_directory={self.is_directory}, record_number={self.record_number})")
 
 class NTFS:
-    def __init__(self, disk_path, partition_offset=0):
+    def __init__(self, disk_path ):
         self.disk_path = disk_path
-        self.partition_offset = partition_offset
+        self.partition_offset = 0
         self.disk = None
         self.boot_sector = None
         self.bytes_per_cluster = 0
         self.cluster_size = 0
         self.files = []
         self.volume_serial = None
+        self.mft_record_size = 0
+        self.mft_cluster = 0
+
         
     def __enter__(self):
         self.open()
@@ -173,16 +178,16 @@ class NTFS:
             
             if len(record_data) < 42:  # Minimum valid record size
                 logger.debug(f"Record {record_number} too small")
-                return None, 0
+                return None
                 
             if record_data[0:4] != b'FILE':
                 # logger.debug(f"Record {record_number} missing FILE signature")
-                return None, 0
-            return record_data, absolute_offset
+                return None
+            return record_data
             
         except Exception as e:
             logger.error(f"Error reading MFT record {record_number}: {e}")
-            return None, 0
+            return None
             
     def parse_file_entry(self, record_data, record_number):
         """Parse an MFT record into a file entry"""
@@ -234,6 +239,8 @@ class NTFS:
             if attr_type == 0x10:  # Standard Information
                 if len(attr_data) >= 48:
                     entry.created = self.parse_ntfs_time(struct.unpack('<Q', attr_data[24:32])[0])
+                    entry.created_time = entry.created.strftime('%H:%M:%S') if entry.created else None
+                    entry.created_date = entry.created.strftime('%Y-%m-%d') if entry.created else None
                     entry.modified = self.parse_ntfs_time(struct.unpack('<Q', attr_data[32:40])[0])
                     entry.accessed = self.parse_ntfs_time(struct.unpack('<Q', attr_data[40:48])[0])
                     
@@ -282,57 +289,87 @@ class NTFS:
             return datetime.datetime(1601, 1, 1) + datetime.timedelta(microseconds=ntfs_time//10)
         except (OverflowError, ValueError):
             return None
+    def get_total_mft_entries(self):
+        """Estimate total MFT entries based on disk size and MFT record size"""
+        if not self.boot_sector:
+            if not self.read_boot_sector():
+                return 0
+        total_mft_entries = 0
+        try:
+            # Calculate total MFT entries based on disk size and MFT record size
+            mft_size = self.boot_sector.mft_cluster * self.bytes_per_cluster
+            total_mft_entries = mft_size // self.boot_sector.mft_record_size
+            logger.info(f"Estimated total MFT entries: {total_mft_entries}")
+            return total_mft_entries
+        except Exception as e:
+            logger.error(f"Error estimating total MFT entries: {e}")
+            return 0
         
-    def scan_files(self, max_files=100):
-        """Scan the MFT for files"""
+
+        return total_mft_entries
+    def scan_files(self):
+        """Scan the entire MFT for files"""
         if not self.boot_sector:
             if not self.read_boot_sector():
                 return False
-                
+
         self.files = []
         valid_records = 0
-        
-        try:
-            for i in range(0, max_files):
-                record_data, _ = self.read_mft_record(i)
-                if record_data:
-                    entry = self.parse_file_entry(record_data, i)
-                    if entry:
-                        self.files.append(entry)
-                        valid_records += 1
-                        
-            logger.info(f"Scanned {valid_records} valid files out of {max_files} records")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error during scan: {e}")
-            return False
-        
-    def print_files(self):
-        """Print discovered files"""
-        print(f"\nFound {len(self.files)} files:")
-        print("{:<8} {:<50} {:<10} {:<20} {:<10} {:<20}".format(
-            "Record", "Name", "Size", "Created", "Type","Data"))
-        print("-" * 120)
-        
-        for file in sorted(self.files, key=lambda x: x.record_number):
-            file_type = "DIR" if file.is_directory else "FILE"
+        total_entries = self.get_total_mft_entries()
 
-            print(file.parent_ref)
-            created_str = file.created.strftime('%Y-%m-%d %H:%M') if file.created else "N/A"
-            print("{:<8} {:<50} {:<10} {:<20} {:<10} {:<50}".format(
-                file.record_number,
-                file.name[:50] if file.name else "N/A",
-                file.size,
-                created_str,
-                file_type,
-                file.data[:50] if file.data else "N/A"
-                # file.parent_ref[:50] if file.parent_ref else "N/A"
-                ))
+        for i in range(0, total_entries):
+            try:
+                record_data = self.read_mft_record(i)
+                if not record_data:
+                    continue  # Skip invalid/unused records
+
+                entry = self.parse_file_entry(record_data, i)
+                if entry:
+                    self.files.append(entry)
+                    valid_records += 1
+
+            except Exception as e:
+                logger.error(f"Error reading MFT record {i}: {e}")
+                continue
+
+        logger.info(f"Scanned {valid_records} valid files out of {total_entries} MFT records")
+        return True    
+    def print_files(self):
+            """Print discovered files"""
+            print(f"\nFound {len(self.files)} files:")
+            print("{:<8} {:<50} {:<10} {:<20} {:<10} {:<20}".format(
+                "Record", "Name", "Size", "Created", "Type","Data"))
+            print("-" * 120)
+            
+            for file in sorted(self.files, key=lambda x: x.record_number):
+                file_type = "DIR" if file.is_directory else "FILE"
+
+                print(file.parent_ref)
+                created_str = file.created.strftime('%Y-%m-%d %H:%M') if file.created else "N/A"
+                print("{:<8} {:<50} {:<10} {:<20} {:<10} {:<50}".format(
+                    file.record_number,
+                    file.name[:50] if file.name else "N/A",
+                    file.size,
+                    created_str,
+                    file_type,
+                    file.data[:50] if file.data else "N/A"
+                    # file.parent_ref[:50] if file.parent_ref else "N/A"
+                    ))
 
     def find_file(self, name):
         """Find a file by name (case insensitive)"""
         return [f for f in self.files if f.name and name.lower() in f.name.lower()]
+    
+def draw_tree(self, tree_widget, parent_node, path, is_last=True): 
+    """Recursively draw the directory tree"""
+    if self.is_directory:
+        item = tree_widget.insert(parent_node, 'end', text=self.name, open=True)
+        for child in self.files:
+            if child.parent_ref == self.name:
+                child.draw_tree(tree_widget, item, path + '\\' + self.name, is_last)
+    else:
+        tree_widget.insert(parent_node, 'end', text=self.name)
+
 
 def check_filesystem(disk_path):
     """Check if the specified path is an NTFS volume"""
