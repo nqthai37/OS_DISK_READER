@@ -37,9 +37,12 @@ NTFSBootSector = namedtuple('NTFSBootSector', [
     'volume_serial', 'checksum'
 ])
 
+# IDs = [ ]
+
 class NTFSFileEntry:
     def __init__(self):
         self.name = None
+        self.used_size = 0
         self.size = 0
         self.created = None
         self.modified = None
@@ -48,6 +51,8 @@ class NTFSFileEntry:
         self.is_directory = False
         self.parent_ref = None
         self.record_number = -1
+        self.data = None  # Placeholder for data attribute
+        self.ID = None  # Placeholder for ID attribute
 
     def __repr__(self):
         return (f"NTFSFileEntry(name={self.name}, size={self.size}, "
@@ -160,7 +165,7 @@ class NTFS:
             if absolute_offset < 0:
                 raise ValueError(f"Invalid negative offset: {absolute_offset}")
             
-            absolute_offset = 33941504
+            # absolute_offset = 33941504
             # print (absolute_offset)
             self.disk.seek(absolute_offset)
             # Read the MFT record
@@ -184,33 +189,32 @@ class NTFS:
         try:
             entry = NTFSFileEntry()
             entry.record_number = record_number
+            entry.flag = struct.unpack('<H', record_data[22:24])[0]
+            entry.used_size = struct.unpack('<I', record_data[32:36])[0]
+            entry.size = struct.unpack('<I', record_data[40:44])[0]
 
-            # Get the offset to the first attribute
+            entry.ID = struct.unpack('<I', record_data[44:48])[0]
+            # print ( 'ID' ,entry.ID)
             attr_offset = struct.unpack('<H', record_data[20:22])[0]
-            # print (attr_offset, 1)
-
+            
+            # if (entry.flag == 0x0001 or entry.flag == 0x0002) and entry.size == 0:
             # Parse all attributes
             while attr_offset + 24  <= len(record_data):  # Minimum attribute header size
                 attr_type = struct.unpack('<I', record_data[attr_offset:attr_offset+4])[0]
+            
                 attr_length = struct.unpack('<I', record_data[attr_offset+4:attr_offset+8])[0]
 
                 content_length = struct.unpack('<I', record_data[attr_offset+16:attr_offset+20])[0]
-                # content_offset += attr_offset
+
                 content_offset = struct.unpack('<H', record_data[attr_offset+20:attr_offset+22])[0]
                 content_offset += attr_offset
-                # print (attr_type, attr_length)
                 if attr_type == 0xFFFFFFFF or attr_length == 0:
                     # print(1)
                     break
-                    
-                # Validate attribute length
+
                 if attr_offset + attr_length > len(record_data):
                     logger.warning(f"Attribute at offset {attr_offset} exceeds record boundary")
                     break
-                # print(record_data[20:22])
-                if (attr_type == 0x30):
-                    print ('content_offset',content_offset)
-                    print ('content_length',content_length)
                 attr_data = record_data[content_offset:content_offset+content_length]
                 # print (attr_data)
                 self.parse_attribute(entry, attr_type, attr_data)
@@ -234,13 +238,20 @@ class NTFS:
                     entry.accessed = self.parse_ntfs_time(struct.unpack('<Q', attr_data[40:48])[0])
                     
             elif attr_type == 0x30:  # File Name
-                print(attr_data)
+                # print(attr_data)
                 if len(attr_data) >= 66:
-                    parent_ref = struct.unpack('<Q', attr_data[0:8])[0]
+                    padding = b'\x00\x00'
+                    parent_ref = struct.unpack('<Q', attr_data[0:6]+ padding)[0]
+                    for file in self.files:
+                        if file.ID == parent_ref:
+                            parent_ref = file.name
+                        elif parent_ref == 5:
+                            parent_ref = self.disk_path.split('\\')[-1]
+                    
                     flags = struct.unpack('<Q', attr_data[56:64])[0]
-                    print('attr',attr_data[0])
+                    # print('attr',attr_data[0])
                     name_length = attr_data[64]
-                    # print (name_length)
+
                     if 66 + name_length * 2 <= len(attr_data):
                         try:
                             name = attr_data[66:66+name_length*2].decode('utf-16le', errors='replace')
@@ -253,13 +264,7 @@ class NTFS:
                             logger.warning("Failed to decode filename")
                             
             elif attr_type == 0x80:  # Data
-                if len(attr_data) >= 24:
-                    non_resident = attr_data[8]
-                    if non_resident == 0:  # Resident
-                        attr_size = struct.unpack('<I', attr_data[16:20])[0]
-                        entry.size = attr_size
-                    elif len(attr_data) >= 56:  # Non-resident
-                        entry.size = struct.unpack('<Q', attr_data[48:56])[0]
+                entry.data = attr_data.decode('utf-8', errors='replace')
                         
             # Record attribute type
             attr_name = ATTRIBUTE_TYPES.get(attr_type, f'UNKNOWN_{hex(attr_type)}')
@@ -306,19 +311,24 @@ class NTFS:
     def print_files(self):
         """Print discovered files"""
         print(f"\nFound {len(self.files)} files:")
-        print("{:<8} {:<50} {:<10} {:<20} {:<10}".format(
-            "Record", "Name", "Size", "Created", "Type"))
-        print("-" * 100)
+        print("{:<8} {:<50} {:<10} {:<20} {:<10} {:<20}".format(
+            "Record", "Name", "Size", "Created", "Type","Data"))
+        print("-" * 120)
         
         for file in sorted(self.files, key=lambda x: x.record_number):
             file_type = "DIR" if file.is_directory else "FILE"
+
+            print(file.parent_ref)
             created_str = file.created.strftime('%Y-%m-%d %H:%M') if file.created else "N/A"
-            print("{:<8} {:<50} {:<10} {:<20} {:<10}".format(
+            print("{:<8} {:<50} {:<10} {:<20} {:<10} {:<50}".format(
                 file.record_number,
                 file.name[:50] if file.name else "N/A",
                 file.size,
                 created_str,
-                file_type))
+                file_type,
+                file.data[:50] if file.data else "N/A"
+                # file.parent_ref[:50] if file.parent_ref else "N/A"
+                ))
 
     def find_file(self, name):
         """Find a file by name (case insensitive)"""
@@ -341,7 +351,7 @@ if __name__ == "__main__":
         disk_path = sys.argv[1]
     else:
         disk_path = r'\\.\E:'
-    
+
     print(f"Attempting to scan {disk_path}...")
     
     # First verify we can access the drive
@@ -373,7 +383,9 @@ if __name__ == "__main__":
             print(f"Volume serial: {hex(ntfs.boot_sector.volume_serial)}")
             
             print("\nScanning files...")
-            if ntfs.scan_files(1):
+            if ntfs.scan_files():
                 ntfs.print_files()
             else:
                 print("Failed to scan files")
+
+
