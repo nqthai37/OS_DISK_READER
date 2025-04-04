@@ -1,6 +1,7 @@
 import os
 import psutil
-from OS_DISK_READER.FAT32 import FAT32
+from FAT32 import FAT32
+from NTFS import NTFS
 
 def list_logical_disks():
     return [
@@ -8,13 +9,6 @@ def list_logical_disks():
         for partition in psutil.disk_partitions(all=True)
     ]
 
-class NTFS:
-    def __init__(self, path):
-        print("...")
-    def draw_tree(self, path, indent='', is_last=True):
-        print("...")
-    def read_path(self, path):
-        print("...")
 
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')

@@ -1,8 +1,6 @@
 import os
 import psutil
-
-def little_endian(data: bytes) -> bytes:
-    return data[::-1]
+#Boot sector
 
 def raw_to_dec(data: bytes) -> int:
     return int.from_bytes(data, 'little')
@@ -58,13 +56,6 @@ def process_fat_lfn(entries: list) -> str:
     )
     return name.decode('utf-16le', errors='ignore').split('\x00', 1)[0]
 
-def print_hex_dump(data: bytes):
-    for offset in range(0, len(data), 16):
-        chunk = data[offset:offset+16]
-        hex_chunk = ' '.join(f'{byte:02X}' for byte in chunk)
-        ascii_chunk = ''.join(chr(byte) if 32 <= byte <= 126 else '.' for byte in chunk)
-        print(f'{offset:08X}: {hex_chunk.ljust(48)}  {ascii_chunk}')
-
 def convert_fat_date(date_val: int) -> str:
     year = ((date_val >> 9) & 0x7F) + 1980
     month = (date_val >> 5) & 0x0F
@@ -94,19 +85,7 @@ class FAT32:
         self.rdet_sector_begin = self.n_sectors_bootsector + self.n_fat_tables * self.n_sectors_fat_table
         self.data_sector_begin = self.rdet_sector_begin
         self.fat_data = read_sectors(self.path, self.n_sectors_bootsector, self.n_sectors_fat_table, self.n_bytes_sector)
-        
-    # def bootsector(self):
-    #     print("FAT32 BOOT SECTOR")
-    #     print(" - Bytes/sector: ", self.n_bytes_sector)
-    #     print(" - Sectors/cluster: ", self.n_sectors_cluster)
-    #     print(" - Sectors/boot sector: ", self.n_sectors_bootsector)
-    #     print(" - FAT Table: ", self.n_fat_tables)
-    #     print(" - Sectors in disk: ", self.volume_size)
-    #     print(" - Sectors in FAT table: ", self.n_sectors_fat_table)
-    #     print(" - RDET Cluster Begin: ", self.rdet_cluster_begin)
-    #     print(" - RDET Sector Begin: ", self.rdet_sector_begin)
-    #     print(" - Subsector: ", self.sub_sector)
-    #     print(" - Sector Store Boot sector: ", self.n_sectors_store_bootsector)
+
         
     def cluster_to_sectors(self, cluster_n):
         sector_begin = (self.n_sectors_bootsector + self.n_fat_tables * self.n_sectors_fat_table 
@@ -163,10 +142,13 @@ class FAT32:
         sectors = self.sectors_chain(entry[2])
         content_txt_file = read_list_sectors(self.path, sectors, self.n_bytes_sector)
         content_txt_file = content_txt_file[:entry[3]]
-        print(content_txt_file.decode('utf-8', errors='ignore'))
+        return content_txt_file.decode('utf-8', errors='ignore')
 
     
     def travel_to(self, path):
+        if not path or path == 'rdet':
+            return ['rdet', 0x10, self.rdet_cluster_begin, 0, '', 0, 0]
+        
         directories = path.split('\\')
         entry = ['rdet', 0x10, self.rdet_cluster_begin, 0, '', 0, 0]
         for directory in directories:
@@ -193,11 +175,11 @@ class FAT32:
             'png': 'Photos'
         }
         if describe_attributes(entry[1]) == "A" and entry[3] != -1:
-            self.print_text_file(entry)
+            return self.print_text_file(entry)
         else:
             file_extension = path.split('.')[-1].lower()   
             suggested_application = apps.get(file_extension, 'Unknown app')
-            print("We currently do not support reading this file. You can use:", suggested_application)
+            return f"We currently do not support reading this file. You can use: {suggested_application}"
     
     def read_path(self, path):
         if path == 'rdet':
@@ -225,30 +207,56 @@ class FAT32:
             self.print_directory(self.read_directory(entry))
         else:
             self.read_file(entry, path)
-    
-    def draw_tree(self, path, indent='', is_last=True):
+
+    def print_directory(self, entries):
+        for entry in entries:
+            print(f"{entry[0]:<20} {'DIR' if describe_attributes(entry[1]) == 'D' else 'FILE'} {entry[3]:>10}")
+            
+    def draw_tree(self, tree_widget, parent_node, path, is_last=True): 
         if path != 'rdet':
             entry_begin = self.travel_to(path)
         else:
             entry_begin = ['rdet', 0x10, self.rdet_cluster_begin, 1, '', 0, 0]
+        
         if describe_attributes(entry_begin[1]) != 'D' or entry_begin[3] == -1:
-            print(path, ": is invalid!")
             return
-        print(indent, end='')
-        if is_last:
-            print("└── ", end='')
-            indent += "    "
-        else:
-            print("├── ", end='')
-            indent += "│   "
-        print(entry_begin[0])
+        
+        # Read directory entries
         entries = self.read_directory(entry_begin)
-        for i, entry in enumerate(entries):
-            last = (i == len(entries) - 1)
+        
+        # Add all entries to the tree
+        for entry in entries:
+            date_str = self.convert_fat_date_time(entry[5], entry[6])
+            
             if describe_attributes(entry[1]) == 'D':
-                item_path = path + "\\" + entry[0] if path != 'rdet' else entry[0]
-                self.draw_tree(item_path, indent, last)
+                # Directory - add with placeholder
+                child_node = tree_widget.insert(
+                    parent_node, 
+                    "end", 
+                    text=entry[0], 
+                    values=("", "Directory", date_str),
+                    open=False
+                )
+                tree_widget.insert(child_node, "end", text="Loading...")
             else:
-                print(indent, end='')
-                print("└── " if last else "├── ", end='')
-                print(entry[0])
+                # File - add directly
+                tree_widget.insert(
+                    parent_node, 
+                    "end", 
+                    text=entry[0], 
+                    values=(entry[3], "File", date_str)
+                )
+
+    def convert_fat_date_time(self, date_val, time_val):  # Fix indentation
+        if date_val == 0 and time_val == 0:
+            return ""
+        date_str = convert_fat_date(date_val)
+        time_str = convert_fat_time(time_val)
+        return f"{date_str} {time_str}"
+                        
+    def convert_fat_date_time(self, date_val, time_val):
+        if date_val == 0 and time_val == 0:
+            return ""
+        date_str = convert_fat_date(date_val)
+        time_str = convert_fat_time(time_val)
+        return f"{date_str} {time_str}"
