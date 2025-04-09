@@ -48,7 +48,6 @@ class NTFSFileEntry:
         self.created_time = None
         self.created_date = None
         self.modified = None
-        self.accessed = None
         self.attributes = []
         self.is_directory = False
         self.parent_ref = None
@@ -238,11 +237,10 @@ class NTFS:
         try:
             if attr_type == 0x10:  # Standard Information
                 if len(attr_data) >= 48:
-                    entry.created = self.parse_ntfs_time(struct.unpack('<Q', attr_data[24:32])[0])
+                    entry.created = self.parse_ntfs_time(struct.unpack('<Q', attr_data[0:8])[0])
                     entry.created_time = entry.created.strftime('%H:%M:%S') if entry.created else None
                     entry.created_date = entry.created.strftime('%Y-%m-%d') if entry.created else None
-                    entry.modified = self.parse_ntfs_time(struct.unpack('<Q', attr_data[32:40])[0])
-                    entry.accessed = self.parse_ntfs_time(struct.unpack('<Q', attr_data[40:48])[0])
+                    entry.modified = self.parse_ntfs_time(struct.unpack('<Q', attr_data[8:16])[0])
                     
             elif attr_type == 0x30:  # File Name
                 # print(attr_data)
@@ -258,11 +256,11 @@ class NTFS:
                     flags = struct.unpack('<I', attr_data[56:60])[0]
                     
                     bin_flags = bin(flags)[2:].zfill(32)
-                    print('flags',flags,bin_flags)
-                    attributes_offset = {0:"ReadOnly", 1:"Hidden", 2:"System", 5:"Directory", 28:"Archive"}
+                    attributes_offset = [0,1,2,5,28]
+                    attributes_names = ["Read-Only", "Hidden", "System", "Archive", "Directory"]
                     for i in range(5):
-                        if bin_flags[31 - i] == '1':
-                            entry.attributes.append(attributes_offset[i])
+                        if bin_flags[31 - attributes_offset[i]] == '1':
+                            entry.attributes.append(attributes_names[i])
                     name_length = attr_data[64]
 
                     if 66 + name_length * 2 <= len(attr_data):
@@ -280,9 +278,9 @@ class NTFS:
                 entry.data = attr_data.decode('utf-8', errors='replace')
                         
             # Record attribute type
-            attr_name = ATTRIBUTE_TYPES.get(attr_type, f'UNKNOWN_{hex(attr_type)}')
-            if attr_name not in entry.attributes:
-                entry.attributes.append(attr_name)
+            # attr_name = ATTRIBUTE_TYPES.get(attr_type, f'UNKNOWN_{hex(attr_type)}')
+            # if attr_name not in entry.attributes:
+            #     entry.attributes.append(attr_name)
                 
         except Exception as e:
             logger.warning(f"Error parsing attribute {hex(attr_type)}: {e}")

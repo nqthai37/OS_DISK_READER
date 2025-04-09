@@ -26,18 +26,18 @@ class FileExplorerApp:
         ttk.Label(top_frame, text="Select Drive:").pack(side=tk.LEFT)
         
         self.drive_var = tk.StringVar()
-        self.drive_combobox = ttk.Combobox(top_frame, textvariable=self.drive_var, width=5)
+        self.drive_combobox = ttk.Combobox(top_frame, textvariable=self.drive_var, width=15)
         self.drive_combobox.pack(side=tk.LEFT, padx=5)
         self.drive_combobox.bind("<<ComboboxSelected>>", self.on_drive_selected)
         
-        self.fs_type_var = tk.StringVar()
-        self.fs_type_combobox = ttk.Combobox(top_frame, textvariable=self.fs_type_var, 
-                                            values=["NTFS", "FAT32"], width=7)
-        self.fs_type_combobox.pack(side=tk.LEFT, padx=5)
-        self.fs_type_combobox.set("NTFS")
+        # self.fs_type_var = tk.StringVar()
+        # ttk.Label(top_frame, text="Filesystem:").pack(side=tk.LEFT, padx=5)
+        # self.fs_type_label = ttk.Label(top_frame, textvariable=self.fs_type_var, width=10)
+        # self.fs_type_label.pack(side=tk.LEFT)
         
         self.load_button = ttk.Button(top_frame, text="Load", command=self.load_filesystem)
         self.load_button.pack(side=tk.LEFT, padx=5)
+        
         
         # Main content area
         main_frame = ttk.Frame(self.root)
@@ -85,36 +85,77 @@ class FileExplorerApp:
         
         # Initialize
         self.populate_drives()
+
+    def detect_filesystem(self, drive):
+        """Detect whether the drive is NTFS or FAT32"""
+        try:
+            # Try reading as NTFS first
+            ntfs = NTFS(r'\\.\\' + drive[0] + ':')
+            if ntfs.open() and ntfs.read_boot_sector():
+                ntfs.close()
+                return "NTFS"
+            
+            # Try reading as FAT32
+            fat32 = FAT32(r'\\.\\' + drive[0] + ':')
+            # Check FAT32 signature (we'll read the first sector and check for FAT signature)
+            with open(r'\\.\\' + drive[0] + ':', 'rb') as f:
+                boot_sector = f.read(512)
+                if boot_sector[510:512] == b'\x55\xAA':  # Boot sector signature
+                    if boot_sector[82:86] == b'FAT32' or boot_sector[54:58] == b'FAT32':
+                        return "FAT32"
+                    elif boot_sector[54:57] == b'FAT':  # Older FAT versions
+                        return "FAT32"  # We'll treat all FAT as FAT32 for simplicity
+        except Exception as e:
+            print(f"Error detecting filesystem: {e}")
+        
+        return "Unknown"
         
     def populate_drives(self):
-        """Populate the drive combobox with available drives"""
+        """Populate the drive combobox with available drives and their filesystems"""
         drives = []
+        fs_types = []
+        
         for drive in range(ord('A'), ord('Z')+1):
             drive_letter = chr(drive) + ":\\"
             if os.path.exists(drive_letter):
                 drives.append(drive_letter)
+                fs_type = self.detect_filesystem(drive_letter)
+                fs_types.append(fs_type)
         
-        self.drive_combobox['values'] = drives
+        # Create display values showing both drive letter and filesystem
+        display_values = [f"{drive} ({fs})" for drive, fs in zip(drives, fs_types)]
+        
+        self.drive_combobox['values'] = display_values
         if drives:
             self.drive_combobox.current(0)
-            
+            # Set the detected filesystem
+            # self.fs_type_var.set(fs_types[0])
+
+    def on_drive_selected(self, event):
+        """Update filesystem type when drive is selected"""
+        selected = self.drive_combobox.get()
+        if selected:
+            # Extract filesystem type from the display text (in parentheses)
+            fs_type = selected[selected.find("(")+1:selected.find(")")]
+            # self.fs_type_var.set(fs_type)
     def load_filesystem(self):
         """Load the selected filesystem"""
-        drive = self.drive_var.get()
-        if not drive:
+        selected = self.drive_combobox.get()
+        if not selected:
             messagebox.showerror("Error", "Please select a drive")
             return
             
-        fs_type = self.fs_type_var.get()
-        if fs_type not in ["NTFS", "FAT32"]:
-            messagebox.showerror("Error", "Please select a valid filesystem type")
+        # Extract drive letter (first character)
+        drive = selected[0] + ":\\"
+        fs_type = self.drive_combobox.get().split('(')[1].split(')')[0]
+        
+        if fs_type == "Unknown":
+            messagebox.showerror("Error", "Could not detect filesystem type")
             return
             
         try:
             if fs_type == "NTFS":
-                print(r'\\./'+drive[0]+':')
-
-                self.current_fs = NTFS(r'\\.\\'+drive[0]+':')
+                self.current_fs = NTFS(r'\\.\\' + drive[0] + ':')
                 self.current_fs.open()
                 if not self.current_fs.read_boot_sector():
                     raise Exception("Failed to read NTFS boot sector")
@@ -262,7 +303,7 @@ class FileExplorerApp:
                     self.info_text.insert(tk.END, f"Size: {file.size} bytes\n")
                     self.info_text.insert(tk.END, f"Created: {file.created.strftime('%Y-%m-%d %H:%M:%S') if file.created else 'N/A'}\n")
                     self.info_text.insert(tk.END, f"Modified: {file.modified.strftime('%Y-%m-%d %H:%M:%S') if file.modified else 'N/A'}\n")
-                    self.info_text.insert(tk.END, f"Accessed: {file.accessed.strftime('%Y-%m-%d %H:%M:%S') if file.accessed else 'N/A'}\n")
+                    # self.info_text.insert(tk.END, f"Accessed: {file.accessed.strftime('%Y-%m-%d %H:%M:%S') if file.accessed else 'N/A'}\n")
                     self.info_text.insert(tk.END, f"Attributes: {', '.join(file.attributes)}\n")
                     self.info_text.insert(tk.END, f"Path: {path}\n")
                     
