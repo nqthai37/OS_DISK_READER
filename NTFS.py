@@ -199,7 +199,7 @@ class NTFS:
             entry.size = struct.unpack('<I', record_data[40:44])[0]
 
             entry.ID = struct.unpack('<I', record_data[44:48])[0]
-            # print ( 'ID' ,entry.ID)
+            # entry.attribute = 
             attr_offset = struct.unpack('<H', record_data[20:22])[0]
             
             # if (entry.flag == 0x0001 or entry.flag == 0x0002) and entry.size == 0:
@@ -255,8 +255,14 @@ class NTFS:
                         elif parent_ref == 5:
                             parent_ref = self.disk_path.split('\\')[-1]
                     
-                    flags = struct.unpack('<Q', attr_data[56:64])[0]
-                    # print('attr',attr_data[0])
+                    flags = struct.unpack('<I', attr_data[56:60])[0]
+                    
+                    bin_flags = bin(flags)[2:].zfill(32)
+                    print('flags',flags,bin_flags)
+                    attributes_offset = {0:"ReadOnly", 1:"Hidden", 2:"System", 5:"Directory", 28:"Archive"}
+                    for i in range(5):
+                        if bin_flags[31 - i] == '1':
+                            entry.attributes.append(attributes_offset[i])
                     name_length = attr_data[64]
 
                     if 66 + name_length * 2 <= len(attr_data):
