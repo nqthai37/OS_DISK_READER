@@ -105,6 +105,9 @@ class FAT32:
     
     def read_entry(self, buffer):
         name = read_bin_offset(buffer, 0, 8).decode('utf-8', errors='ignore').strip()
+        file_ext = read_bin_offset(buffer, 0x08, 3).decode('utf-8', errors='ignore').strip()
+        if file_ext:
+            name += '.' + file_ext
         attr = read_dec_offset(buffer, 0xB, 1)
         cluster_begin = read_dec_offset(buffer, 0x1A, 2)
         size = read_dec_offset(buffer, 0x1C, 4)
@@ -123,6 +126,7 @@ class FAT32:
         for i in range(0, len(buffer), 32):
             entry_bytes = buffer[i:i+32]
             ent = self.read_entry(entry_bytes)
+            print(f"Entry: {ent}")
             if ent[1] != 15:  # Not LFN entry
                 if sub_entries:
                     sub_name = process_fat_lfn(sub_entries)
@@ -155,12 +159,13 @@ class FAT32:
             entries = self.read_directory(entry)
             found = False
             for ent in entries:
+                # print(ent[0])
                 if directory == ent[0]:
                     entry = ent
                     found = True
                     break
-            if not found:
-                return ['', 0x04, '', -1, '', 0, 0]
+        if not found:
+            return ['', 0x04, '', -1, '', 0, 0]
         return entry 
     
     def read_file(self, entry, path):
@@ -175,6 +180,7 @@ class FAT32:
             'png': 'Photos'
         }
         if describe_attributes(entry[1]) == "A" and entry[3] != -1:
+
             return self.print_text_file(entry)
         else:
             file_extension = path.split('.')[-1].lower()   
