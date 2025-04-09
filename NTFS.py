@@ -393,7 +393,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         disk_path = sys.argv[1]
     else:
-        disk_path = r'\\.\E:'
+        disk_path = r'\\.\\'+"E"+":"
 
     print(f"Attempting to scan {disk_path}...")
     
@@ -416,6 +416,7 @@ if __name__ == "__main__":
     
     # Perform the scan
     with NTFS(disk_path) as ntfs:
+        print(disk_path)
         if ntfs.read_boot_sector():
             print("\nNTFS Boot Sector Information:")
             print(f"OEM ID: {ntfs.boot_sector.oem_id}")
