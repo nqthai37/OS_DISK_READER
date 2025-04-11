@@ -320,9 +320,12 @@ class FileExplorerApp:
                     self.content_text.delete(1.0, tk.END)
                     
                     if not file.is_directory and file.data:
-                        self.content_text.insert(tk.END, file.data)
+                        if file.name.endswith('.txt'):
+                            self.content_text.insert(tk.END, file.data)
+                        else:
+                            self.content_text.insert(tk.END, "[Not a text file, Displaying is not supported]")
                     elif not file.is_directory:
-                        self.content_text.insert(tk.END, "[Binary content not displayed]")
+                        self.content_text.insert(tk.END, "[Not a text file, Displaying is not supported]")
                     else:
                         self.content_text.insert(tk.END, "[Directory content shown in tree]")
                     
