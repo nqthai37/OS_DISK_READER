@@ -109,7 +109,7 @@ class FileExplorerApp:
         try:
             # Try reading as NTFS first
             ntfs = NTFS(r'\\.\\' + drive[0] + ':')
-            if ntfs.open() and ntfs.read_boot_sector():
+            if ntfs.open() and ntfs.read_boot_record():
                 ntfs.close()
                 fs_type = "NTFS"
             else:
@@ -165,7 +165,7 @@ class FileExplorerApp:
             if fs_type == "NTFS":
                 self.current_fs = NTFS(r'\\.\\' + drive[0] + ':')
                 self.current_fs.open()
-                if not self.current_fs.read_boot_sector():
+                if not self.current_fs.read_boot_record():
                     raise Exception("Failed to read NTFS boot sector")
                 if not self.current_fs.scan_files():
                     raise Exception("Failed to scan NTFS files")
